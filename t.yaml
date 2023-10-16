@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pod-app-name
+spec:
+
+  selector: {}
+  strategy: # для нового развертываения
+    rollingUpdate:
+      maxSurge: 1 # сколько новых одновременно поднимается в момент апдейта приложа
+      maxUnavailable: 1 # сколько максимум недоступно в момент апдейта приложа
+    type: RollingUpdate
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: app-name
+    spec:
+      serviceAccountName: acc-name #для rbac
+#      securityContext:
+#        fsGroup: 1000
+      containers:
+        - name: имя контейнера
+#          securityContext: {}
+
+          image: "nginx:1"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128M
+            limits:
+              cpu: 100m #троттлинг на старте приложа
+              memory: 128M #+10%
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - -e
+                - app run start probe
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              scheme: HTTP
+              path: /ready
+              port: 8080
+          livenessProbe:
+            httpGet:
+              scheme: HTTP
+              path: /alive
+              port: 8080
+      affinity: #https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution: # todo: refactor this
+            - labelSelector:
+                matchExpressions:
+                  - key: security
+                    operator: In
+                    values:
+                      - S1
+              topologyKey: topology.kubernetes.io/zone
+
+# Source: hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-app-name
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: pod-app-name
+  minReplicas: 3 # сколько зон
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: cpu
+          averageUtilization: 80 #сколько max cpu перед скейлингом
